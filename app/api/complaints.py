@@ -2,7 +2,8 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile, HTTPExce
 from typing import Optional
 from uuid import uuid4
 
-from app.db import get_supabase
+from app.config import settings
+from app.db import create_signed_url, get_supabase
 from app.schemas import ComplaintResponse
 from app.services.location import extract_exif_location
 from app.services.processor import process_complaint
@@ -22,8 +23,7 @@ async def submit_complaint(
     photo: Optional[UploadFile] = File(None),
 ):
     supabase = get_supabase()
-    photo_url = None
-    exif_lat = exif_lng = None
+    photo_path = None
     location_source = "MANUAL"
 
     photo_bytes = await photo.read() if photo else None
@@ -33,19 +33,15 @@ async def submit_complaint(
             latitude, longitude = exif_lat, exif_lng
             location_source = "EXIF"
             location_accuracy_m = None
-        from app.config import settings
-        path = f"complaints/{uuid4()}.jpg"
+        photo_path = f"complaints/{uuid4()}.jpg"
         supabase.storage.from_(settings.supabase_bucket).upload(
-            path, photo_bytes,
+            photo_path,
+            photo_bytes,
             file_options={"content-type": photo.content_type or "image/jpeg"},
         )
-        photo_url = supabase.storage.from_(settings.supabase_bucket).get_public_url(path)
 
     if location_source != "EXIF" and latitude is not None and longitude is not None:
         location_source = "GPS"
-
-    if location_source == "MANUAL" and latitude is not None and longitude is not None:
-        location_source = "MANUAL"
 
     insert = supabase.table("complaints").insert({
         "description": description,
@@ -55,7 +51,7 @@ async def submit_complaint(
         "longitude": longitude,
         "location_accuracy_m": location_accuracy_m,
         "location_source": location_source,
-        "photo_url": photo_url,
+        "photo_path": photo_path,
         "processing_status": "QUEUED",
     }).execute()
     complaint = insert.data[0]
@@ -72,7 +68,11 @@ async def submit_complaint(
 
 @router.get("/{complaint_id}")
 async def get_complaint(complaint_id: str):
-    result = get_supabase().table("complaints").select("*").eq("id", complaint_id).execute()
+    supabase = get_supabase()
+    result = supabase.table("complaints").select("*").eq("id", complaint_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Complaint not found")
-    return result.data[0]
+    complaint = result.data[0]
+    if complaint.get("photo_path"):
+        complaint["photo_url"] = create_signed_url(supabase, complaint["photo_path"])
+    return complaint
