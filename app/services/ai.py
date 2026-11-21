@@ -6,17 +6,22 @@ from app.config import settings
 
 
 async def analyze_complainant(description: str, has_image: bool) -> dict[str, Any]:
-    if not settings.gemini_api_key or settings.gemini_api_key in {"replace-me", "MY_GEMINI_API_KEY"}:
-        return {
-            "category": "OTHER",
-            "severity": "MEDIUM",
-            "summary": description[:500],
-            "hazards": [],
-            "recommended_department": "Municipal General",
-            "original_language": "unknown",
-            "confidence": 0.0,
-            "model": "fallback",
-        }
+    fallback = {
+        "category": "OTHER",
+        "severity": "MEDIUM",
+        "summary": description[:500],
+        "hazards": [],
+        "recommended_department": "Municipal General",
+        "original_language": "unknown",
+        "confidence": 0.0,
+        "model": "fallback",
+    }
+    if (
+        not settings.gemini_api_key
+        or settings.gemini_api_key in {"replace-me", "MY_GEMINI_API_KEY"}
+        or len(settings.gemini_api_key) < 20
+    ):
+        return fallback
 
     try:
         genai.configure(api_key=settings.gemini_api_key)
@@ -29,21 +34,19 @@ async def analyze_complainant(description: str, has_image: bool) -> dict[str, An
         )
         response = model.generate_content(prompt)
         import json
+        import re
 
         try:
-            return json.loads(response.text)
+            text = response.text.strip()
+            fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+            if fenced:
+                text = fenced.group(1)
+            result = json.loads(text)
+            result["model"] = settings.gemini_model
+            return result
         except json.JSONDecodeError:
-            pass
+            fallback["model"] = settings.gemini_model
+            return fallback
     except Exception:
-        pass
-
-    return {
-        "category": "OTHER",
-        "severity": "MEDIUM",
-        "summary": description[:500],
-        "hazards": [],
-        "recommended_department": "Municipal General",
-        "original_language": "unknown",
-        "confidence": 0.0,
-        "model": "fallback",
-    }
+        fallback["model"] = "fallback-invalid-gemini-key"
+        return fallback
