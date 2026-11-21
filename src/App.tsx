@@ -105,7 +105,8 @@ export default function App() {
     department_code?: string;
     isDemoQuickLogin?: boolean;
   }) {
-    const loggedIn = await apiClient.login(params, health.mode);
+    const demoMode = params.isDemoQuickLogin || health.mode === 'demo';
+    const loggedIn = await apiClient.login(params, demoMode ? 'demo' : health.mode);
     setSession(loggedIn);
     setSelectedTicketCode(null);
     routeAfterAuth(loggedIn.role);
@@ -121,7 +122,10 @@ export default function App() {
     password: string;
     department_code?: string;
   }) {
-    const created = await apiClient.signup(params, health.mode);
+    const created = await apiClient.signup(
+      params,
+      health.mode === 'demo' ? 'demo' : health.mode
+    );
     setSession(created);
     setSelectedTicketCode(null);
     routeAfterAuth(created.role);

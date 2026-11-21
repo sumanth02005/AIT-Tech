@@ -216,6 +216,41 @@ export interface CreateComplaintResponse {
   is_simulated: boolean;
 }
 
+export interface BackendComplaintResponse {
+  id: string;
+  status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  incident_id?: string | null;
+  ticket_id?: string | null;
+  location_source: string;
+}
+
+export interface BackendTicket {
+  id: string;
+  incident_id?: string | null;
+  category: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  department: string;
+  priority: number;
+  status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED';
+  assigned_department?: string | null;
+  assigned_officer?: string | null;
+  human_review_required?: boolean;
+  resolution_notes?: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  incidents?: {
+    id: string;
+    status?: string;
+    summary?: string | null;
+    category?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    created_at?: string;
+    updated_at?: string;
+  } | null;
+}
+
 export interface DepartmentAnalytics {
   department_code: string;
   department_name: string;

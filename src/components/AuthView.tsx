@@ -134,7 +134,7 @@ export function AuthView({
         setOauthNotice(
           `OAuth provider (${
             provider === 'google' ? 'Google' : 'Municipal SSO'
-          }) is wired for /api/v1/auth/oauth/${provider}. Connect your FastAPI/Supabase OAuth credentials to redirect users automatically.`
+          }) is currently demo-only. Live OAuth is not implemented by the backend.`
         );
       }
     } catch (err) {

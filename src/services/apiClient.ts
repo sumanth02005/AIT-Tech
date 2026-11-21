@@ -21,6 +21,8 @@ import {
   TicketSeverity,
   TicketStatus,
   UserRole,
+  BackendTicket,
+  BackendComplaintResponse,
 } from '../types/civiclens';
 import { haversineMeters } from '../utils/geo';
 
@@ -87,6 +89,119 @@ export function sortTicketsByPriority(tickets: Ticket[]): Ticket[] {
 
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
+}
+
+function normalizeBackendCategory(category?: string | null): ComplaintCategory {
+  const normalized = (category || 'OTHER').toLowerCase();
+  if (normalized === 'road') return 'roads';
+  if (normalized === 'waste' || normalized === 'sanitation') return 'waste';
+  if (normalized === 'water') return 'water';
+  if (normalized === 'electricity') return 'electricity';
+  if (normalized === 'tree' || normalized === 'public_safety') return 'trees';
+  if (normalized === 'drainage') return 'drainage';
+  return 'roads';
+}
+
+function normalizeBackendSeverity(severity?: string | null): TicketSeverity {
+  const normalized = (severity || 'MEDIUM').toLowerCase();
+  if (normalized === 'critical') return 'critical';
+  if (normalized === 'high') return 'high';
+  if (normalized === 'low') return 'low';
+  return 'medium';
+}
+
+function normalizeDepartmentCode(department?: string | null): string {
+  const normalized = (department || 'Municipal General').toUpperCase();
+  if (normalized.includes('ROAD')) return 'ROAD';
+  if (normalized.includes('WASTE') || normalized.includes('SANITATION')) return 'SANITATION';
+  if (normalized.includes('WATER')) return 'WATER';
+  if (normalized.includes('ELECTRIC')) return 'ELECTRICITY';
+  if (normalized.includes('TREE')) return 'TREES';
+  if (normalized.includes('DRAIN')) return 'DRAINAGE';
+  return 'GENERAL';
+}
+
+function normalizeBackendTicket(raw: BackendTicket): Ticket {
+  const incident = raw.incidents ?? null;
+  const category = normalizeBackendCategory(raw.category);
+  const severity = normalizeBackendSeverity(raw.severity);
+  const now = raw.updated_at || raw.created_at;
+  const complaintCode = `CMP-${raw.incident_id || raw.id}`;
+  const complaint: ComplaintRecord = {
+    id: raw.incident_id || raw.id,
+    complaint_code: complaintCode,
+    citizen_name: 'Citizen Reporter',
+    citizen_contact: 'Not provided',
+    title: incident?.summary || 'Municipal complaint',
+    description: incident?.summary || '',
+    language_hint: 'auto',
+    detected_language: 'unknown',
+    latitude: incident?.latitude ?? 0,
+    longitude: incident?.longitude ?? 0,
+    location_accuracy_m: 0,
+    location_source: 'manual_map',
+    location_label: 'Location from Supabase incident',
+    processing_status: 'completed',
+    pipeline_stage: 'ticket_routed',
+    duplicate_outcome: 'new_complaint',
+    incident_ticket_code: raw.id,
+    created_at: incident?.created_at || raw.created_at,
+  };
+
+  return {
+    id: raw.id,
+    ticket_code: raw.id,
+    primary_complaint_code: complaintCode,
+    summary: incident?.summary || `${category} incident`,
+    category,
+    severity,
+    severity_reason: raw.human_review_required
+      ? 'Human review required'
+      : 'Backend decision',
+    priority_score: raw.priority,
+    is_critical_escalated: severity === 'critical',
+    department_code: normalizeDepartmentCode(raw.assigned_department || raw.department),
+    department_name: raw.assigned_department || raw.department,
+    assigned_officer: raw.assigned_officer || undefined,
+    status: raw.status,
+    needs_human_review: Boolean(raw.human_review_required),
+    duplicate_count: 1,
+    location_label: complaint.location_label,
+    latitude: complaint.latitude,
+    longitude: complaint.longitude,
+    location_accuracy_m: complaint.location_accuracy_m,
+    location_source: 'manual_map',
+    resolution_notes: raw.resolution_notes || undefined,
+    is_simulated: false,
+    created_at: raw.created_at,
+    updated_at: now,
+    resolved_at: raw.resolved_at || undefined,
+    linked_complaints: [complaint],
+    ai_evaluation: {
+      id: `ai-${raw.id}`,
+      complaint_id: complaint.id,
+      gemini_category: category,
+      gemini_severity: severity,
+      gemini_confidence: 0,
+      gemini_hazards: [],
+      gemini_summary: complaint.description,
+      gemini_recommended_department: raw.department,
+      detected_language: 'unknown',
+      laya_category: category,
+      laya_severity: severity,
+      laya_confidence: 0,
+      laya_rationale: 'Backend classification',
+      rules_triggered: [],
+      has_disagreement: false,
+      disagreement_summary: '',
+      embedding_model: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+      embedding_dimensions: 384,
+      is_simulated: false,
+      created_at: raw.created_at,
+    },
+    duplicate_matches: [],
+    audit_logs: [],
+  };
 }
 
 function classifyTextSimulated(
@@ -252,8 +367,8 @@ export class CivicLensApiClient {
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 1800);
-      const res = await fetch(`${API_BASE}/api/v1/health`, {
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(`${API_BASE}/health`, {
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -304,16 +419,7 @@ export class CivicLensApiClient {
     mode: 'live' | 'demo'
   ) {
     if (mode === 'live') {
-      const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(msg || `Login failed (${res.status})`);
-      }
-      return await res.json();
+      throw new Error('Live login is not implemented by the backend.');
     }
 
     const defaultName =
@@ -347,16 +453,7 @@ export class CivicLensApiClient {
     mode: 'live' | 'demo'
   ) {
     if (mode === 'live') {
-      const res = await fetch(`${API_BASE}/api/v1/auth/signup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(msg || `Signup failed (${res.status})`);
-      }
-      return await res.json();
+      throw new Error('Live signup is not implemented by the backend.');
     }
 
     return {
@@ -379,39 +476,24 @@ export class CivicLensApiClient {
     mode: 'live' | 'demo'
   ): Promise<{ redirectUrl?: string; pendingIntegration: boolean }> {
     if (mode === 'live') {
-      const query = new URLSearchParams({
-        role,
-        ...(departmentCode ? { department_code: departmentCode } : {}),
-      });
-      const res = await fetch(
-        `${API_BASE}/api/v1/auth/oauth/${provider}?${query.toString()}`
-      );
-      if (!res.ok) {
-        throw new Error(`OAuth endpoint returned ${res.status}`);
-      }
-      const data = await res.json();
-      return { redirectUrl: data.authorization_url, pendingIntegration: false };
+      throw new Error('OAuth is not implemented by the backend.');
     }
     return { pendingIntegration: true };
   }
 
   async fetchTickets(mode: 'live' | 'demo'): Promise<Ticket[]> {
     if (mode === 'live') {
-      const res = await fetch(`${API_BASE}/api/v1/tickets`);
+      const res = await fetch(`${API_BASE}/api/tickets`);
       if (!res.ok) throw new Error(`FastAPI error (${res.status}) loading tickets`);
-      const data = await res.json();
-      return sortTicketsByPriority(data.tickets ?? data);
+      const data = await res.json() as BackendTicket[];
+      return sortTicketsByPriority((Array.isArray(data) ? data : []).map(normalizeBackendTicket));
     }
     return sortTicketsByPriority(readStoredTickets());
   }
 
   async fetchNotifications(mode: 'live' | 'demo'): Promise<CitizenNotification[]> {
     if (mode === 'live') {
-      const res = await fetch(`${API_BASE}/api/v1/notifications`);
-      if (res.ok) {
-        const data = await res.json();
-        return data.notifications ?? data;
-      }
+      return [];
     }
     return readStoredNotifications();
   }
@@ -424,21 +506,17 @@ export class CivicLensApiClient {
     if (mode === 'live') {
       onStageChange?.('submitted');
       const formData = new FormData();
-      formData.append('title', payload.title);
       formData.append('description', payload.description);
-      formData.append('language_hint', payload.language_hint);
       formData.append('citizen_name', payload.citizen_name);
       formData.append('citizen_contact', payload.citizen_contact);
       formData.append('latitude', String(payload.location.latitude));
       formData.append('longitude', String(payload.location.longitude));
       formData.append('location_accuracy_m', String(payload.location.accuracy_m));
-      formData.append('location_source', payload.location.source);
-      formData.append('location_label', payload.location.address_label || 'Selected Pin');
       if (payload.image_file) {
-        formData.append('image', payload.image_file);
+        formData.append('photo', payload.image_file);
       }
 
-      const res = await fetch(`${API_BASE}/api/v1/complaints`, {
+      const res = await fetch(`${API_BASE}/api/complaints`, {
         method: 'POST',
         body: formData,
       });
@@ -447,7 +525,84 @@ export class CivicLensApiClient {
         throw new Error(errBody || `Failed to submit complaint (${res.status})`);
       }
       onStageChange?.('ticket_routed');
-      return await res.json();
+      const backendResponse = await res.json() as BackendComplaintResponse;
+      let tickets = await this.fetchTickets('live');
+      let ticket =
+        tickets.find((item) => item.id === backendResponse.ticket_id);
+      for (let attempt = 0; !ticket && attempt < 6; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        tickets = await this.fetchTickets('live');
+        ticket =
+          tickets.find((item) => item.id === backendResponse.ticket_id) ||
+          tickets.find((item) =>
+            item.created_at >= (new Date(Date.now() - 30000)).toISOString()
+          );
+      }
+      const now = new Date().toISOString();
+      const complaintCode = `CMP-${backendResponse.id}`;
+      const complaint: ComplaintRecord = {
+        id: backendResponse.id,
+        complaint_code: complaintCode,
+        citizen_name: payload.citizen_name,
+        citizen_contact: payload.citizen_contact,
+        title: payload.title,
+        description: payload.description,
+        language_hint: payload.language_hint,
+        detected_language: 'unknown',
+        image_url: payload.image_preview_url,
+        latitude: payload.location.latitude,
+        longitude: payload.location.longitude,
+        location_accuracy_m: payload.location.accuracy_m,
+        location_source: payload.location.source,
+        location_label: payload.location.address_label || 'Selected Pin',
+        processing_status: backendResponse.status === 'FAILED'
+          ? 'failed'
+          : backendResponse.status === 'COMPLETED'
+          ? 'completed'
+          : 'queued',
+        pipeline_stage: 'ticket_routed',
+        duplicate_outcome: 'new_complaint',
+        incident_ticket_code: backendResponse.ticket_id || backendResponse.id,
+        created_at: now,
+      };
+      if (ticket) {
+        return {
+          complaint,
+          ticket,
+          duplicate_outcome: 'new_complaint',
+          is_simulated: false,
+        };
+      }
+      const fallbackTicket = normalizeBackendTicket({
+        id: backendResponse.ticket_id || backendResponse.id,
+        incident_id: backendResponse.incident_id,
+        category: 'OTHER',
+        severity: 'MEDIUM',
+        department: 'Municipal General',
+        priority: 40,
+        status: 'OPEN',
+        human_review_required: false,
+        resolution_notes: null,
+        resolved_at: null,
+        created_at: now,
+        updated_at: now,
+        incidents: {
+          id: backendResponse.incident_id || backendResponse.id,
+          status: 'OPEN',
+          summary: payload.description,
+          category: 'OTHER',
+          latitude: payload.location.latitude,
+          longitude: payload.location.longitude,
+          created_at: now,
+          updated_at: now,
+        },
+      });
+      return {
+        complaint,
+        ticket: fallbackTicket,
+        duplicate_outcome: 'new_complaint',
+        is_simulated: false,
+      };
     }
 
     // Clearly labeled client-side simulation of the 7-stage backend pipeline
@@ -748,19 +903,20 @@ export class CivicLensApiClient {
     }
   ): Promise<Ticket> {
     if (mode === 'live') {
-      const res = await fetch(`${API_BASE}/api/v1/tickets/${ticketCode}/status`, {
+      const res = await fetch(`${API_BASE}/api/tickets/${ticketCode}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: nextStatus,
-          actor_name: actorName,
           assigned_officer: options?.assigned_officer,
           resolution_notes: options?.resolution_notes,
-          resolution_image_url: options?.resolution_image_url,
         }),
       });
       if (!res.ok) throw new Error(`Failed to update status (${res.status})`);
-      return await res.json();
+      const raw = await res.json() as BackendTicket;
+      const tickets = await this.fetchTickets('live');
+      return tickets.find((item) => item.id === ticketCode) ||
+        normalizeBackendTicket({ ...raw, incidents: null });
     }
 
     const tickets = readStoredTickets();
@@ -832,13 +988,22 @@ export class CivicLensApiClient {
     mode: 'live' | 'demo'
   ): Promise<Ticket> {
     if (mode === 'live') {
-      const res = await fetch(`${API_BASE}/api/v1/tickets/${ticketCode}/override`, {
+      if (updates.severity || updates.category) {
+        throw new Error('Severity and category overrides are not implemented by the backend.');
+      }
+      if (!updates.department_code) {
+        throw new Error('The backend only supports department assignment overrides.');
+      }
+      const res = await fetch(`${API_BASE}/api/tickets/${ticketCode}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...updates, actor_name: actorName }),
+        body: JSON.stringify({ assigned_department: updates.department_code }),
       });
       if (!res.ok) throw new Error(`Failed to record override (${res.status})`);
-      return await res.json();
+      const tickets = await this.fetchTickets('live');
+      const updated = tickets.find((item) => item.id === ticketCode);
+      if (!updated) throw new Error(`Ticket ${ticketCode} was updated but could not be refreshed.`);
+      return updated;
     }
 
     const tickets = readStoredTickets();
@@ -899,13 +1064,7 @@ export class CivicLensApiClient {
     mode: 'live' | 'demo'
   ): Promise<Ticket[]> {
     if (mode === 'live') {
-      const res = await fetch(`${API_BASE}/api/v1/duplicates/${matchId}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, actor_name: actorName }),
-      });
-      if (!res.ok) throw new Error(`Duplicate resolution failed (${res.status})`);
-      return await this.fetchTickets('live');
+      throw new Error('Duplicate resolution is not implemented by the backend.');
     }
 
     const tickets = readStoredTickets();
