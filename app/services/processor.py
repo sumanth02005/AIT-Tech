@@ -15,9 +15,20 @@ async def process_complaint(
     has_image: bool,
 ):
     supabase = get_supabase()
-    ai_result = await analyze_complainant(description, has_image)
-    rules_result = evaluate_rules(description, ai_result)
-    embedding = embed_text(description)
+    try:
+        ai_result = await analyze_complainant(description, has_image)
+        rules_result = evaluate_rules(description, ai_result)
+        embedding = embed_text(description)
+    except Exception:
+        ai_result = {
+            "category": "OTHER",
+            "severity": "MEDIUM",
+            "summary": description[:500],
+            "confidence": 0.0,
+            "model": "fallback",
+        }
+        rules_result = evaluate_rules(description, ai_result)
+        embedding = embed_text(description)
 
     supabase.table("complaints").update({
         "ai_category": rules_result["category"],
@@ -31,16 +42,19 @@ async def process_complaint(
 
     duplicate = None
     if latitude is not None and longitude is not None:
-        result = supabase.rpc("find_duplicate_candidates", {
-            "query_embedding": embedding,
-            "query_latitude": latitude,
-            "query_longitude": longitude,
-            "query_category": rules_result["category"],
-            "exclude_complaint_id": complaint_id,
-        }).execute()
-        candidates = result.data or []
-        if candidates:
-            duplicate = max(candidates, key=lambda item: item["duplicate_score"])
+        try:
+            result = supabase.rpc("find_duplicate_candidates", {
+                "query_embedding": embedding,
+                "query_latitude": latitude,
+                "query_longitude": longitude,
+                "query_category": rules_result["category"],
+                "exclude_complaint_id": complaint_id,
+            }).execute()
+            candidates = result.data or []
+            if candidates:
+                duplicate = max(candidates, key=lambda item: item["duplicate_score"])
+        except Exception:
+            duplicate = None
 
     incident_id = None
     ticket_id = None

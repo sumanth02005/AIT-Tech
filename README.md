@@ -22,7 +22,8 @@ tests/          Focused backend logic tests
 
 1. Install Python 3.11+.
 2. Copy `.env.example` to `.env` and configure Supabase and Gemini.
-3. Apply the Supabase migrations in `supabase/migrations/` in filename order. They create the CivicLens tables, extensions, indexes, database functions/triggers, RLS boundaries, and the private `complaint-evidence` Storage bucket.
+3. Run the Supabase migration from `supabase/migrations/202611210001_civiclens.sql`.
+4. Create the `complaint-evidence` Supabase Storage bucket.
 5. Install dependencies:
 
 ```powershell

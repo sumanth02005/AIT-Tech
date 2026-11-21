@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_bucket: str = "complaint-evidence"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-2.5-flash"
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     cors_origins: str = "http://localhost:5173"
 

@@ -16,7 +16,11 @@ async def analyze_complainant(description: str, has_image: bool) -> dict[str, An
         "confidence": 0.0,
         "model": "fallback",
     }
-    if not settings.gemini_api_key or len(settings.gemini_api_key) < 20:
+    if (
+        not settings.gemini_api_key
+        or settings.gemini_api_key in {"replace-me", "MY_GEMINI_API_KEY"}
+        or len(settings.gemini_api_key) < 20
+    ):
         return fallback
 
     try:

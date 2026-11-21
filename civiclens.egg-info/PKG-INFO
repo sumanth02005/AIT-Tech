@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: civiclens
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn[standard]>=0.34
+Requires-Dist: pydantic-settings>=2.7
+Requires-Dist: python-multipart>=0.0.20
+Requires-Dist: supabase>=2.11
+Requires-Dist: Pillow>=11.0
+Requires-Dist: google-generativeai>=0.8
+Requires-Dist: sentence-transformers>=3.3
+Provides-Extra: test
+Requires-Dist: pytest>=8.3; extra == "test"
+Requires-Dist: httpx>=0.28; extra == "test"

@@ -34,26 +34,35 @@ async def submit_complaint(
             location_source = "EXIF"
             location_accuracy_m = None
         photo_path = f"complaints/{uuid4()}.jpg"
-        supabase.storage.from_(settings.supabase_bucket).upload(
-            photo_path,
-            photo_bytes,
-            file_options={"content-type": photo.content_type or "image/jpeg"},
-        )
+        try:
+            supabase.storage.from_(settings.supabase_bucket).upload(
+                photo_path,
+                photo_bytes,
+                file_options={"content-type": photo.content_type or "image/jpeg"},
+            )
+        except Exception:
+            photo_path = None
 
     if location_source != "EXIF" and latitude is not None and longitude is not None:
         location_source = "GPS"
 
-    insert = supabase.table("complaints").insert({
-        "description": description,
-        "citizen_name": citizen_name,
-        "citizen_contact": citizen_contact,
-        "latitude": latitude,
-        "longitude": longitude,
-        "location_accuracy_m": location_accuracy_m,
-        "location_source": location_source,
-        "photo_path": photo_path,
-        "processing_status": "QUEUED",
-    }).execute()
+    try:
+        insert = supabase.table("complaints").insert({
+            "description": description,
+            "citizen_name": citizen_name,
+            "citizen_contact": citizen_contact,
+            "latitude": latitude,
+            "longitude": longitude,
+            "location_accuracy_m": location_accuracy_m,
+            "location_source": location_source,
+            "photo_path": photo_path,
+            "processing_status": "QUEUED",
+        }).execute()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Complaint could not be saved to Supabase.",
+        ) from exc
     complaint = insert.data[0]
     background_tasks.add_task(
         process_complaint,
