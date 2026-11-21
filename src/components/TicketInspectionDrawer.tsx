@@ -27,6 +27,7 @@ import {
 
 interface TicketInspectionDrawerProps {
   ticket: Ticket | null;
+  sessionRole: 'officer' | 'admin';
   onClose: () => void;
   onTransitionStatus: (
     ticketCode: string,
@@ -57,6 +58,7 @@ type DrawerTab = 'overview' | 'ai' | 'duplicates' | 'lifecycle';
 
 export function TicketInspectionDrawer({
   ticket,
+  sessionRole,
   onClose,
   onTransitionStatus,
   onOverrideDecision,
@@ -441,12 +443,13 @@ export function TicketInspectionDrawer({
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">
-                      Department
+                      Department {sessionRole === 'officer' && '(Admin Only)'}
                     </label>
                     <select
                       value={overrideDept}
+                      disabled={sessionRole === 'officer'}
                       onChange={(e) => setOverrideDept(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-md disabled:bg-slate-100 disabled:text-slate-500"
                     >
                       {DEPARTMENTS.map((d) => (
                         <option key={d.code} value={d.code}>
@@ -628,21 +631,34 @@ export function TicketInspectionDrawer({
                   {LIFECYCLE_ORDER.map((stage, idx) => {
                     const isCurrent = stage === ticket.status;
                     const isNextValid = idx === currentStageIdx + 1 || idx > currentStageIdx;
+                    const restrictedAdminClosure =
+                      stage === 'CLOSED' && sessionRole !== 'admin';
                     return (
                       <button
                         key={stage}
                         type="button"
-                        disabled={busyAction || isCurrent || !isNextValid}
+                        disabled={
+                          busyAction ||
+                          isCurrent ||
+                          !isNextValid ||
+                          restrictedAdminClosure
+                        }
                         onClick={() => handleStatusAction(stage)}
+                        title={
+                          restrictedAdminClosure
+                            ? 'Final ticket closure (CLOSED) requires City Admin verification'
+                            : undefined
+                        }
                         className={`px-3 py-1.5 text-xs font-mono font-semibold rounded-md border transition-colors ${
                           isCurrent
                             ? 'bg-slate-900 text-white border-slate-900'
-                            : isNextValid
+                            : isNextValid && !restrictedAdminClosure
                             ? 'bg-blue-700 text-white border-blue-700 hover:bg-blue-800 cursor-pointer'
                             : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
                         }`}
                       >
                         {stage}
+                        {restrictedAdminClosure ? ' (Admin)' : ''}
                       </button>
                     );
                   })}

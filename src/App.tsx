@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnalyticsMonitoringView } from './components/AnalyticsMonitoringView';
+import { AuthView, OAuthProvider } from './components/AuthView';
 import { CitizenIntakeView } from './components/CitizenIntakeView';
 import { CitizenTrackerView } from './components/CitizenTrackerView';
 import { ActiveView, Header } from './components/Header';
@@ -34,34 +35,11 @@ const INITIAL_HEALTH: BackendHealth = {
   checked_at: new Date().toISOString(),
 };
 
-const ROLE_SESSIONS: Record<UserRole, UserSession> = {
-  citizen: {
-    id: 'usr-citizen-1',
-    full_name: 'Citizen Reporter',
-    email: 'citizen@civiclens.local',
-    role: 'citizen',
-    auth_mode: 'demo_role',
-  },
-  officer: {
-    id: 'usr-officer-1',
-    full_name: 'R. Deshmukh',
-    email: 'deshmukh.eng@city.gov',
-    role: 'officer',
-    department_code: 'ELECTRICITY',
-    auth_mode: 'demo_role',
-  },
-  admin: {
-    id: 'usr-admin-1',
-    full_name: 'Dr. Kavita Rao',
-    email: 'commissioner@city.gov',
-    role: 'admin',
-    auth_mode: 'demo_role',
-  },
-};
+const MY_SUBMISSIONS_KEY = 'civiclens_my_submissions_v1';
 
 export default function App() {
-  const [session, setSession] = useState<UserSession>(ROLE_SESSIONS.officer);
-  const [activeView, setActiveView] = useState<ActiveView>('officer');
+  const [session, setSession] = useState<UserSession | null>(null);
+  const [activeView, setActiveView] = useState<ActiveView>('auth');
   const [modePreference, setModePreference] = useState<'auto' | 'demo'>('auto');
   const [health, setHealth] = useState<BackendHealth>(INITIAL_HEALTH);
 
@@ -70,6 +48,14 @@ export default function App() {
   const [loadingTickets, setLoadingTickets] = useState(true);
   const [selectedTicketCode, setSelectedTicketCode] = useState<string | null>(null);
   const [trackerQueryCode, setTrackerQueryCode] = useState<string>('');
+  const [mySubmittedCodes, setMySubmittedCodes] = useState<string[]>(() => {
+    try {
+      const raw = sessionStorage.getItem(MY_SUBMISSIONS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = useCallback((msg: string) => {
@@ -106,13 +92,63 @@ export default function App() {
     loadWorkspaceData(modePreference);
   }, [loadWorkspaceData, modePreference]);
 
-  function handleRoleChange(role: UserRole) {
-    setSession(ROLE_SESSIONS[role]);
-    if (role === 'citizen' && (activeView === 'officer' || activeView === 'analytics')) {
-      setActiveView('submit');
-      setSelectedTicketCode(null);
+  function routeAfterAuth(role: UserRole) {
+    if (role === 'citizen') setActiveView('submit');
+    else if (role === 'officer') setActiveView('officer');
+    else setActiveView('analytics');
+  }
+
+  async function handleLogin(params: {
+    role: UserRole;
+    email: string;
+    password: string;
+    department_code?: string;
+    isDemoQuickLogin?: boolean;
+  }) {
+    const loggedIn = await apiClient.login(params, health.mode);
+    setSession(loggedIn);
+    setSelectedTicketCode(null);
+    routeAfterAuth(loggedIn.role);
+    showToast(
+      `Signed in as ${loggedIn.full_name} (${loggedIn.role.toUpperCase()})`
+    );
+  }
+
+  async function handleSignup(params: {
+    role: UserRole;
+    full_name: string;
+    email: string;
+    password: string;
+    department_code?: string;
+  }) {
+    const created = await apiClient.signup(params, health.mode);
+    setSession(created);
+    setSelectedTicketCode(null);
+    routeAfterAuth(created.role);
+    showToast(`Account created for ${created.full_name}`);
+  }
+
+  async function handleOAuthClick(
+    provider: OAuthProvider,
+    role: UserRole,
+    departmentCode?: string
+  ) {
+    const res = await apiClient.initiateOAuth(
+      provider,
+      role,
+      departmentCode,
+      health.mode
+    );
+    if (res.redirectUrl) {
+      window.location.assign(res.redirectUrl);
     }
-    showToast(`Switched workspace role to ${role.toUpperCase()}`);
+  }
+
+  function handleSignOut() {
+    setSession(null);
+    setSelectedTicketCode(null);
+    setActiveView('auth');
+    showToast('Signed out.');
   }
 
   async function handleSubmitComplaint(
@@ -124,6 +160,17 @@ export default function App() {
     const updatedNotifs = await apiClient.fetchNotifications(health.mode);
     setTickets(updatedTickets);
     setNotifications(updatedNotifs);
+
+    setMySubmittedCodes((prev) => {
+      const next = [res.complaint.complaint_code, ...prev].slice(0, 8);
+      try {
+        sessionStorage.setItem(MY_SUBMISSIONS_KEY, JSON.stringify(next));
+      } catch {
+        // Ignore sessionStorage errors
+      }
+      return next;
+    });
+
     showToast(
       res.duplicate_outcome === 'likely_duplicate'
         ? `Linked ${res.complaint.complaint_code} to active ticket ${res.ticket.ticket_code}`
@@ -141,6 +188,7 @@ export default function App() {
       resolution_image_url?: string;
     }
   ) {
+    if (!session) return;
     const updated = await apiClient.transitionStatus(
       ticketCode,
       nextStatus,
@@ -168,6 +216,7 @@ export default function App() {
       reason: string;
     }
   ) {
+    if (!session) return;
     const updated = await apiClient.overrideDecision(
       ticketCode,
       updates,
@@ -188,6 +237,7 @@ export default function App() {
     matchId: string,
     decision: 'confirm_merge' | 'keep_separate'
   ) {
+    if (!session) return;
     const updatedList = await apiClient.resolveDuplicateMatch(
       ticketCode,
       matchId,
@@ -227,8 +277,6 @@ export default function App() {
     [tickets]
   );
 
-  const unreadNotificationsCount = notifications.filter((n) => !n.is_read).length;
-
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       <Header
@@ -238,15 +286,27 @@ export default function App() {
           if (view !== 'officer') setSelectedTicketCode(null);
         }}
         session={session}
-        onRoleChange={handleRoleChange}
+        onSignOut={handleSignOut}
         health={health}
         modePreference={modePreference}
         onToggleModePreference={(mode) => setModePreference(mode)}
         onResetDemo={handleResetDemo}
-        unreadNotificationsCount={unreadNotificationsCount}
       />
 
       <main className="flex-1">
+        {activeView === 'auth' && (
+          <AuthView
+            backendMode={health.mode}
+            onLogin={handleLogin}
+            onSignup={handleSignup}
+            onOAuthClick={handleOAuthClick}
+            onOpenPublicTracker={() => {
+              setTrackerQueryCode('');
+              setActiveView('track');
+            }}
+          />
+        )}
+
         {activeView === 'submit' && (
           <CitizenIntakeView
             mode={health.mode}
@@ -255,7 +315,9 @@ export default function App() {
               setTrackerQueryCode(code);
               setActiveView('track');
             }}
-            canOpenOfficerDesk={session.role === 'officer' || session.role === 'admin'}
+            canOpenOfficerDesk={
+              session?.role === 'officer' || session?.role === 'admin'
+            }
             onOpenOfficerTicket={(ticketCode) => {
               setActiveView('officer');
               setSelectedTicketCode(ticketCode);
@@ -268,20 +330,25 @@ export default function App() {
             tickets={tickets}
             notifications={notifications}
             initialSearchCode={trackerQueryCode}
+            mySubmittedCodes={mySubmittedCodes}
+            viewerRole={session?.role ?? null}
             onMarkNotificationsRead={handleMarkNotificationsRead}
           />
         )}
 
-        {activeView === 'officer' && (
-          <OfficerDashboardView
-            tickets={tickets}
-            loading={loadingTickets}
-            selectedTicketCode={selectedTicketCode}
-            onSelectTicket={(code) => setSelectedTicketCode(code)}
-          />
-        )}
+        {activeView === 'officer' &&
+          (session?.role === 'officer' || session?.role === 'admin') && (
+            <OfficerDashboardView
+              tickets={tickets}
+              loading={loadingTickets}
+              selectedTicketCode={selectedTicketCode}
+              onSelectTicket={(code) => setSelectedTicketCode(code)}
+              sessionRole={session.role}
+              officerDepartmentCode={session.department_code}
+            />
+          )}
 
-        {activeView === 'analytics' && (
+        {activeView === 'analytics' && session?.role === 'admin' && (
           <AnalyticsMonitoringView
             analytics={analyticsOverview}
             tickets={tickets}
@@ -293,9 +360,10 @@ export default function App() {
         )}
       </main>
 
-      {(session.role === 'officer' || session.role === 'admin') && (
+      {(session?.role === 'officer' || session?.role === 'admin') && (
         <TicketInspectionDrawer
           ticket={selectedTicket}
+          sessionRole={session.role}
           onClose={() => setSelectedTicketCode(null)}
           onTransitionStatus={handleTransitionStatus}
           onOverrideDecision={handleOverrideDecision}

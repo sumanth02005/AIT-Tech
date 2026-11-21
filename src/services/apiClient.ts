@@ -294,6 +294,107 @@ export class CivicLensApiClient {
     };
   }
 
+  async login(
+    params: {
+      role: UserRole;
+      email: string;
+      password: string;
+      department_code?: string;
+    },
+    mode: 'live' | 'demo'
+  ) {
+    if (mode === 'live') {
+      const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || `Login failed (${res.status})`);
+      }
+      return await res.json();
+    }
+
+    const defaultName =
+      params.role === 'citizen'
+        ? params.email.split('@')[0] || 'Citizen User'
+        : params.role === 'officer'
+        ? 'R. Deshmukh'
+        : 'Dr. Kavita Rao';
+
+    return {
+      id: `usr-${params.role}-${Date.now()}`,
+      full_name: defaultName,
+      email: params.email,
+      role: params.role,
+      department_code:
+        params.role === 'officer'
+          ? params.department_code || 'ELECTRICITY'
+          : undefined,
+      auth_mode: 'demo_role' as const,
+    };
+  }
+
+  async signup(
+    params: {
+      role: UserRole;
+      full_name: string;
+      email: string;
+      password: string;
+      department_code?: string;
+    },
+    mode: 'live' | 'demo'
+  ) {
+    if (mode === 'live') {
+      const res = await fetch(`${API_BASE}/api/v1/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || `Signup failed (${res.status})`);
+      }
+      return await res.json();
+    }
+
+    return {
+      id: `usr-${params.role}-${Date.now()}`,
+      full_name: params.full_name,
+      email: params.email,
+      role: params.role,
+      department_code:
+        params.role === 'officer'
+          ? params.department_code || 'ELECTRICITY'
+          : undefined,
+      auth_mode: 'demo_role' as const,
+    };
+  }
+
+  async initiateOAuth(
+    provider: 'google' | 'municipal_sso',
+    role: UserRole,
+    departmentCode: string | undefined,
+    mode: 'live' | 'demo'
+  ): Promise<{ redirectUrl?: string; pendingIntegration: boolean }> {
+    if (mode === 'live') {
+      const query = new URLSearchParams({
+        role,
+        ...(departmentCode ? { department_code: departmentCode } : {}),
+      });
+      const res = await fetch(
+        `${API_BASE}/api/v1/auth/oauth/${provider}?${query.toString()}`
+      );
+      if (!res.ok) {
+        throw new Error(`OAuth endpoint returned ${res.status}`);
+      }
+      const data = await res.json();
+      return { redirectUrl: data.authorization_url, pendingIntegration: false };
+    }
+    return { pendingIntegration: true };
+  }
+
   async fetchTickets(mode: 'live' | 'demo'): Promise<Ticket[]> {
     if (mode === 'live') {
       const res = await fetch(`${API_BASE}/api/v1/tickets`);

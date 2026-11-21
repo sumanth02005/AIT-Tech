@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { Bell, CheckCircle2, MapPin, Search } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Bell, CheckCircle2, Lock, MapPin, Search } from 'lucide-react';
 import { CATEGORY_LABELS, LIFECYCLE_ORDER } from '../data/seedData';
-import { CitizenNotification, Ticket } from '../types/civiclens';
+import { CitizenNotification, Ticket, UserRole } from '../types/civiclens';
 import { formatCoordinates, formatDateTime } from '../utils/geo';
 import { EvidenceImage, LifecycleBadge, ProvenanceNotice, SeverityBadge } from './StatusPrimitives';
 
@@ -9,6 +9,8 @@ interface CitizenTrackerViewProps {
   tickets: Ticket[];
   notifications: CitizenNotification[];
   initialSearchCode?: string;
+  mySubmittedCodes: string[];
+  viewerRole: UserRole | null;
   onMarkNotificationsRead: () => void;
 }
 
@@ -16,22 +18,22 @@ export function CitizenTrackerView({
   tickets,
   notifications,
   initialSearchCode = '',
+  mySubmittedCodes,
+  viewerRole,
   onMarkNotificationsRead,
 }: CitizenTrackerViewProps) {
-  const [query, setQuery] = useState(
-    initialSearchCode || tickets[0]?.primary_complaint_code || ''
-  );
+  const [inputCode, setInputCode] = useState(initialSearchCode);
+  const [submittedQuery, setSubmittedQuery] = useState(initialSearchCode);
 
-  const recentCodes = useMemo(() => {
-    return tickets.slice(0, 5).map((t) => ({
-      complaintCode: t.primary_complaint_code,
-      ticketCode: t.ticket_code,
-      label: t.summary,
-    }));
-  }, [tickets]);
+  useEffect(() => {
+    if (initialSearchCode) {
+      setInputCode(initialSearchCode);
+      setSubmittedQuery(initialSearchCode);
+    }
+  }, [initialSearchCode]);
 
   const matchedResult = useMemo(() => {
-    const q = query.trim().toUpperCase();
+    const q = submittedQuery.trim().toUpperCase();
     if (!q) return null;
     for (const ticket of tickets) {
       if (ticket.ticket_code.toUpperCase() === q) {
@@ -45,10 +47,10 @@ export function CitizenTrackerView({
       }
     }
     return null;
-  }, [query, tickets]);
+  }, [submittedQuery, tickets]);
 
   const relatedNotifications = useMemo(() => {
-    if (!matchedResult) return notifications.slice(0, 4);
+    if (!matchedResult) return [];
     return notifications.filter(
       (n) =>
         n.ticket_code === matchedResult.ticket.ticket_code ||
@@ -60,9 +62,16 @@ export function CitizenTrackerView({
     ? LIFECYCLE_ORDER.indexOf(matchedResult.ticket.status)
     : -1;
 
+  const isStaff = viewerRole === 'officer' || viewerRole === 'admin';
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmittedQuery(inputCode.trim());
+  }
+
   return (
     <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
-      {/* Header + Search Bar */}
+      {/* Header + Private ID Lookup Form */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -70,46 +79,72 @@ export function CitizenTrackerView({
               Track Complaint & Resolution Status
             </h1>
             <p className="text-sm text-slate-600 mt-1">
-              Enter your Complaint ID (<span className="font-mono">CMP-2026-XXXX</span>) or Incident Ticket ID (<span className="font-mono">CL-2026-XXXX</span>) to inspect progress and department updates.
+              Enter your exact Complaint ID (<span className="font-mono">CMP-2026-XXXX</span>) or Incident ID (<span className="font-mono">CL-2026-XXXX</span>) to check live progress. Other citizens&apos; complaints are never listed publicly.
             </p>
           </div>
-          <div className="flex items-center gap-2 w-full md:w-96">
+
+          <form
+            onSubmit={handleSearchSubmit}
+            className="flex items-center gap-2 w-full md:w-[420px]"
+          >
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="CMP-2026-0914 or CL-2026-0419"
-                aria-label="Search complaint or ticket ID"
+                value={inputCode}
+                onChange={(e) => setInputCode(e.target.value)}
+                placeholder="Enter Complaint ID (e.g., CMP-2026-...)"
+                aria-label="Enter complaint or ticket ID"
                 className="w-full pl-9 pr-3 py-2 text-sm font-mono bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
-          </div>
+            <button
+              type="submit"
+              className="px-4 py-2 text-sm font-semibold text-white bg-blue-700 rounded-lg hover:bg-blue-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Check Status
+            </button>
+          </form>
         </div>
 
-        {/* Quick Select Recent IDs */}
-        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-slate-500">Quick Lookup:</span>
-          {recentCodes.map((item) => (
-            <button
-              key={item.ticketCode}
-              type="button"
-              onClick={() => setQuery(item.complaintCode)}
-              className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors cursor-pointer ${
-                query.toUpperCase() === item.complaintCode ||
-                query.toUpperCase() === item.ticketCode
-                  ? 'bg-slate-900 text-white border-slate-900'
-                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-              }`}
-            >
-              {item.complaintCode} → {item.ticketCode}
-            </button>
-          ))}
-        </div>
+        {/* Show ONLY complaints submitted by this user in their own session */}
+        {mySubmittedCodes.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">
+              Your Submissions (This Session):
+            </span>
+            {mySubmittedCodes.map((code) => (
+              <button
+                key={code}
+                type="button"
+                onClick={() => {
+                  setInputCode(code);
+                  setSubmittedQuery(code);
+                }}
+                className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors cursor-pointer ${
+                  submittedQuery.toUpperCase() === code.toUpperCase()
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                {code}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {matchedResult ? (
+      {!submittedQuery.trim() ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-10 text-center space-y-2">
+          <Lock className="w-6 h-6 text-slate-400 mx-auto" />
+          <h2 className="text-sm font-semibold text-slate-900">
+            Enter a Complaint ID to View Status
+          </h2>
+          <p className="text-xs text-slate-500 max-w-md mx-auto">
+            For citizen privacy, public complaint records are not browsable. Submit a new complaint to receive your tracking ID, or enter an existing Complaint ID above.
+          </p>
+        </div>
+      ) : matchedResult ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left: Lifecycle & Incident Details */}
           <div className="lg:col-span-8 bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-6">
@@ -179,11 +214,11 @@ export function CitizenTrackerView({
               </div>
             </div>
 
-            {/* Duplicate Link Notice (Proving preservation) */}
+            {/* Duplicate Link Notice (without exposing other citizens' PII) */}
             {matchedResult.complaint?.duplicate_outcome === 'likely_duplicate' && (
               <div className="p-3.5 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-900">
-                Your report (<span className="font-mono font-semibold">{matchedResult.complaint.complaint_code}</span>) was matched with nearby reports into active incident{' '}
-                <span className="font-mono font-semibold">{matchedResult.ticket.ticket_code}</span> ({matchedResult.ticket.duplicate_count} citizen reports total). Your original description and evidence remain preserved on record.
+                Your report (<span className="font-mono font-semibold">{matchedResult.complaint.complaint_code}</span>) was linked with nearby reports into active incident{' '}
+                <span className="font-mono font-semibold">{matchedResult.ticket.ticket_code}</span> ({matchedResult.ticket.duplicate_count} total reports). Your original report remains preserved.
               </div>
             )}
 
@@ -209,7 +244,7 @@ export function CitizenTrackerView({
               </div>
             )}
 
-            {/* Original Citizen Submission & Location */}
+            {/* Submitted Report & Location (PII masked for public lookup) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2 border-t border-slate-100">
               <div className="space-y-3 text-sm">
                 <div>
@@ -225,12 +260,18 @@ export function CitizenTrackerView({
                 </div>
                 <div>
                   <div className="text-xs font-medium text-slate-500">
-                    Original Report Text ({matchedResult.complaint?.detected_language})
+                    Report Description ({matchedResult.complaint?.detected_language})
                   </div>
                   <div className="text-slate-800 mt-0.5">
                     {matchedResult.complaint?.description}
                   </div>
                 </div>
+                {isStaff && matchedResult.complaint && (
+                  <div className="text-xs text-slate-500">
+                    Reporter Contact (Staff View): {matchedResult.complaint.citizen_name} ·{' '}
+                    {matchedResult.complaint.citizen_contact}
+                  </div>
+                )}
                 <div className="flex items-center gap-1.5 text-xs font-mono text-slate-600">
                   <MapPin className="w-3.5 h-3.5 text-blue-700 shrink-0" />
                   <span>
@@ -256,23 +297,25 @@ export function CitizenTrackerView({
             </div>
           </div>
 
-          {/* Right: Citizen Notifications & Audit History */}
+          {/* Right: Ticket-Scoped Notifications & Public Audit Timeline */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2">
                   <Bell className="w-4 h-4 text-blue-700" />
                   <h3 className="text-sm font-semibold text-slate-900">
-                    Status Notifications
+                    Ticket Notifications
                   </h3>
                 </div>
-                <button
-                  type="button"
-                  onClick={onMarkNotificationsRead}
-                  className="text-xs text-blue-700 hover:underline cursor-pointer"
-                >
-                  Mark all read
-                </button>
+                {relatedNotifications.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={onMarkNotificationsRead}
+                    className="text-xs text-blue-700 hover:underline cursor-pointer"
+                  >
+                    Mark read
+                  </button>
+                )}
               </div>
               <div className="mt-3 space-y-2.5">
                 {relatedNotifications.length === 0 ? (
@@ -302,7 +345,7 @@ export function CitizenTrackerView({
 
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-slate-900 pb-3 border-b border-slate-100">
-                Public Audit Timeline
+                Status History
               </h3>
               <div className="mt-3 space-y-3">
                 {matchedResult.ticket.audit_logs.map((entry) => (
@@ -326,10 +369,10 @@ export function CitizenTrackerView({
       ) : (
         <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
           <p className="text-sm font-medium text-slate-800">
-            No complaint or incident ticket matched “{query}”.
+            No complaint or incident ticket matched “{submittedQuery}”.
           </p>
           <p className="text-xs text-slate-500 mt-1">
-            Try selecting one of the Quick Lookup IDs above or verify your Complaint ID.
+            Double-check your Complaint ID (e.g., CMP-2026-XXXX) and try again.
           </p>
         </div>
       )}

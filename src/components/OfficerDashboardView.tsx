@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  Building2,
   Columns,
   GitMerge,
   List,
@@ -24,6 +25,8 @@ interface OfficerDashboardViewProps {
   loading: boolean;
   selectedTicketCode: string | null;
   onSelectTicket: (ticketCode: string) => void;
+  sessionRole: 'officer' | 'admin';
+  officerDepartmentCode?: string;
 }
 
 export function OfficerDashboardView({
@@ -31,6 +34,8 @@ export function OfficerDashboardView({
   loading,
   selectedTicketCode,
   onSelectTicket,
+  sessionRole,
+  officerDepartmentCode,
 }: OfficerDashboardViewProps) {
   const [search, setSearch] = useState('');
   const [severityFilter, setSeverityFilter] = useState<TicketSeverity | 'all'>('all');
@@ -40,37 +45,54 @@ export function OfficerDashboardView({
   const [reviewOnly, setReviewOnly] = useState(false);
   const [layoutMode, setLayoutMode] = useState<'split' | 'table' | 'map'>('split');
 
+  const isDeptScopedOfficer = sessionRole === 'officer' && Boolean(officerDepartmentCode);
+
+  const scopedTickets = useMemo(() => {
+    if (isDeptScopedOfficer) {
+      return tickets.filter((t) => t.department_code === officerDepartmentCode);
+    }
+    return tickets;
+  }, [tickets, isDeptScopedOfficer, officerDepartmentCode]);
+
+  const activeDeptName = useMemo(() => {
+    if (!officerDepartmentCode) return null;
+    return (
+      DEPARTMENTS.find((d) => d.code === officerDepartmentCode)?.name ||
+      officerDepartmentCode
+    );
+  }, [officerDepartmentCode]);
+
   const stats = useMemo(() => {
-    const totalComplaints = tickets.reduce((sum, t) => sum + t.duplicate_count, 0);
-    const pending = tickets.filter(
+    const totalComplaints = scopedTickets.reduce((sum, t) => sum + t.duplicate_count, 0);
+    const pending = scopedTickets.filter(
       (t) => t.status === 'OPEN' || t.status === 'ASSIGNED'
     ).length;
-    const inProgress = tickets.filter((t) => t.status === 'IN_PROGRESS').length;
-    const resolved = tickets.filter(
+    const inProgress = scopedTickets.filter((t) => t.status === 'IN_PROGRESS').length;
+    const resolved = scopedTickets.filter(
       (t) => t.status === 'RESOLVED' || t.status === 'CLOSED'
     ).length;
-    const criticalEscalated = tickets.filter(
+    const criticalEscalated = scopedTickets.filter(
       (t) => t.is_critical_escalated && t.status !== 'CLOSED' && t.status !== 'RESOLVED'
     ).length;
-    const reviewNeeded = tickets.filter((t) => t.needs_human_review).length;
+    const reviewNeeded = scopedTickets.filter((t) => t.needs_human_review).length;
 
     return {
       totalComplaints,
-      totalTickets: tickets.length,
+      totalTickets: scopedTickets.length,
       pending,
       inProgress,
       resolved,
       criticalEscalated,
       reviewNeeded,
     };
-  }, [tickets]);
+  }, [scopedTickets]);
 
   const filteredTickets = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return tickets.filter((t) => {
+    return scopedTickets.filter((t) => {
       if (severityFilter !== 'all' && t.severity !== severityFilter) return false;
       if (categoryFilter !== 'all' && t.category !== categoryFilter) return false;
-      if (departmentFilter !== 'all' && t.department_code !== departmentFilter)
+      if (!isDeptScopedOfficer && departmentFilter !== 'all' && t.department_code !== departmentFilter)
         return false;
       if (statusFilter !== 'all' && t.status !== statusFilter) return false;
       if (reviewOnly && !t.needs_human_review) return false;
@@ -81,10 +103,11 @@ export function OfficerDashboardView({
       return true;
     });
   }, [
-    tickets,
+    scopedTickets,
     search,
     severityFilter,
     categoryFilter,
+    isDeptScopedOfficer,
     departmentFilter,
     statusFilter,
     reviewOnly,
@@ -104,11 +127,27 @@ export function OfficerDashboardView({
       {/* Page Title & View Switcher */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-            Municipal Officer Triage Desk
-          </h1>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+              {isDeptScopedOfficer
+                ? `${activeDeptName} — Officer Desk`
+                : 'City-Wide Triage Oversight'}
+            </h1>
+            {isDeptScopedOfficer ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium bg-blue-50 text-blue-800 border border-blue-200 rounded">
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Department Scoped</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium bg-slate-900 text-white rounded">
+                <span>Admin Cross-Department View</span>
+              </span>
+            )}
+          </div>
           <p className="text-sm text-slate-600 mt-0.5">
-            Priority-sorted incident queue with Gemini Pro + Laya evaluation, PostGIS duplicate verification, and lifecycle dispatch.
+            {isDeptScopedOfficer
+              ? 'Showing priority-sorted incidents routed to your department. Advance field work from OPEN through RESOLVED.'
+              : 'Full city-wide queue across all 6 municipal departments with override authority and final CLOSED sign-off.'}
           </p>
         </div>
 
@@ -158,7 +197,7 @@ export function OfficerDashboardView({
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
           <div className="text-xs font-medium text-slate-500">
-            Total Complaints / Incidents
+            {isDeptScopedOfficer ? 'Department Reports' : 'City-Wide Reports'}
           </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-bold font-mono tabular-nums text-slate-900">
@@ -225,7 +264,7 @@ export function OfficerDashboardView({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search ticket ID, summary, ward, or department..."
+            placeholder="Search ticket ID, summary, or ward..."
             className="w-full pl-9 pr-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600"
           />
         </div>
@@ -243,35 +282,39 @@ export function OfficerDashboardView({
           <option value="low">Low</option>
         </select>
 
-        <select
-          aria-label="Filter by category"
-          value={categoryFilter}
-          onChange={(e) =>
-            setCategoryFilter(e.target.value as ComplaintCategory | 'all')
-          }
-          className="px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg"
-        >
-          <option value="all">All Categories</option>
-          {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
-            <option key={key} value={key}>
-              {label}
-            </option>
-          ))}
-        </select>
+        {!isDeptScopedOfficer && (
+          <>
+            <select
+              aria-label="Filter by category"
+              value={categoryFilter}
+              onChange={(e) =>
+                setCategoryFilter(e.target.value as ComplaintCategory | 'all')
+              }
+              className="px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg"
+            >
+              <option value="all">All Categories</option>
+              {Object.entries(CATEGORY_LABELS).map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
 
-        <select
-          aria-label="Filter by department"
-          value={departmentFilter}
-          onChange={(e) => setDepartmentFilter(e.target.value)}
-          className="px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg"
-        >
-          <option value="all">All Departments</option>
-          {DEPARTMENTS.map((dept) => (
-            <option key={dept.code} value={dept.code}>
-              {dept.name}
-            </option>
-          ))}
-        </select>
+            <select
+              aria-label="Filter by department"
+              value={departmentFilter}
+              onChange={(e) => setDepartmentFilter(e.target.value)}
+              className="px-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg"
+            >
+              <option value="all">All Departments</option>
+              {DEPARTMENTS.map((dept) => (
+                <option key={dept.code} value={dept.code}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
 
         <select
           aria-label="Filter by lifecycle status"
@@ -315,10 +358,14 @@ export function OfficerDashboardView({
           >
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between text-xs text-slate-500">
               <span>
-                Showing <strong className="text-slate-900 font-mono tabular-nums">{filteredTickets.length}</strong> prioritized incidents
+                Showing{' '}
+                <strong className="text-slate-900 font-mono tabular-nums">
+                  {filteredTickets.length}
+                </strong>{' '}
+                prioritized incidents
               </span>
               <ProvenanceNotice
-                isSimulated={tickets[0]?.is_simulated ?? true}
+                isSimulated={scopedTickets[0]?.is_simulated ?? tickets[0]?.is_simulated ?? true}
                 compact
               />
             </div>
@@ -335,7 +382,7 @@ export function OfficerDashboardView({
             ) : filteredTickets.length === 0 ? (
               <div className="p-10 text-center">
                 <p className="text-sm font-medium text-slate-800">
-                  No tickets match your current filters.
+                  No tickets match your current filters in this view.
                 </p>
                 <button
                   type="button"
@@ -365,9 +412,7 @@ export function OfficerDashboardView({
                           key={ticket.ticket_code}
                           onClick={() => onSelectTicket(ticket.ticket_code)}
                           className={`transition-colors cursor-pointer ${
-                            isSelected
-                              ? 'bg-blue-50/70'
-                              : 'hover:bg-slate-50'
+                            isSelected ? 'bg-blue-50/70' : 'hover:bg-slate-50'
                           }`}
                         >
                           <td className="py-3 px-4 align-top whitespace-nowrap">
@@ -454,7 +499,9 @@ export function OfficerDashboardView({
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">
-                  Geographic Complaint Map
+                  {isDeptScopedOfficer
+                    ? `${activeDeptName} Map`
+                    : 'City-Wide Complaint Map'}
                 </h2>
                 <p className="text-slate-500">
                   Click any marker to inspect evidence. Dashed ring indicates 250m PostGIS duplicate radius.
